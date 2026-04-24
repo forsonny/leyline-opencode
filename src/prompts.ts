@@ -1,3 +1,4 @@
+import { artifactPaths, requiredHeadings } from "./artifacts"
 import type { Phase, WorkflowRecord } from "./types"
 
 const universal = `You are operating inside OpenCode Workflow Kernel.
@@ -18,7 +19,75 @@ Do not modify workflow policy, trusted state, workflow memory, plugin files, Ope
 export const continuationInstruction = `Continuation mode:
 When the active user request is to start, resume, or continue a workflow, keep executing the current phase contract and any returned next_actions immediately.
 Treat next_actions as instructions to perform, not status text to report.
-Stop only when the workflow reaches DONE, ABORTED, BLOCKED, MEMORY_CONFLICT, a workflow tool returns ok:false, policy denies an action, or user input is required.`
+If a workflow tool returns ok:false with recovery_actions, perform those recovery actions once and retry the blocked step.
+Stop only when the workflow reaches DONE, ABORTED, BLOCKED, MEMORY_CONFLICT, a workflow tool returns ok:false without recovery_actions, the same recovery fails again, policy denies an action, or user input is required.`
+
+function headingsRequirement(path: string, headings: string[]) {
+  return `Artifact requirements for ${path}:
+Use these headings exactly, each on its own line:
+${headings.map((heading) => `- ${heading}`).join("\n")}`
+}
+
+function critiqueRequirement(path: string, phase: "SPEC_CRITIQUE" | "PLAN_CRITIQUE") {
+  return `Artifact requirements for ${path}:
+Write a JSON object with these fields:
+- phase: "${phase}"
+- result: "pass" or "fail"
+- summary: non-empty string
+- blockers: array
+- major_issues: array
+- minor_issues: array
+- scores: object whose values are integers from 0 to 2
+- required_revisions: array
+Gate pass requires result "pass", no blockers, every score at least 1, and total score at least 10.`
+}
+
+function taskRequirement() {
+  return `Task artifact requirements for .workflow/tasks/*.json:
+Create tasks only with workflow_create_task. Each task must include id, title, status, risk_level, objective, allowed_files, forbidden_files, dependencies, preconditions, steps, acceptance, verification, and rollback. Keep allowed_files narrow.`
+}
+
+function integrationRequirement() {
+  return `Artifact requirements for ${artifactPaths.integrationVerification}:
+Write a JSON object with result, commands, git_status_summary, diff_summary, spec_alignment, plan_alignment, known_limitations, and remaining_risks. Gate pass requires result, spec_alignment, and plan_alignment to be "pass".`
+}
+
+function finalReviewRequirement() {
+  return `${headingsRequirement(artifactPaths.finalReport, requiredHeadings.finalReport)}
+
+Artifact requirements for ${artifactPaths.finalReview}:
+Write a JSON object with result, reviewer_model, summary, spec_alignment, plan_completion, verification_quality, risk_assessment, and commit_readiness. Gate pass requires result "pass", commit_readiness "ready", and each subsection result "pass".`
+}
+
+export function phaseRequirement(phase: Phase) {
+  switch (phase) {
+    case "DISCOVER":
+      return headingsRequirement(artifactPaths.discovery, requiredHeadings.discovery)
+    case "BRAINSTORM":
+      return headingsRequirement(artifactPaths.brainstorm, requiredHeadings.brainstorm)
+    case "SPEC_DRAFT":
+    case "SPEC_REVISION":
+      return `${headingsRequirement(artifactPaths.productSpec, requiredHeadings.productSpec)}
+
+${headingsRequirement(artifactPaths.designSpec, requiredHeadings.designSpec)}`
+    case "SPEC_CRITIQUE":
+      return critiqueRequirement(artifactPaths.specCritique, "SPEC_CRITIQUE")
+    case "PLAN_DRAFT":
+    case "PLAN_REVISION":
+      return headingsRequirement(artifactPaths.plan, requiredHeadings.plan)
+    case "PLAN_CRITIQUE":
+      return critiqueRequirement(artifactPaths.planCritique, "PLAN_CRITIQUE")
+    case "TASK_ATOMIZATION":
+    case "TASK_REGENERATION":
+      return taskRequirement()
+    case "INTEGRATION_VERIFICATION":
+      return integrationRequirement()
+    case "FINAL_REVIEW":
+      return finalReviewRequirement()
+    default:
+      return "No artifact schema is required for this phase. Follow the phase contract."
+  }
+}
 
 const contracts: Record<Phase, string> = {
   INIT: "Current phase: INIT. Start or recover the workflow through workflow_start or workflow_status only.",
@@ -61,6 +130,8 @@ Commit: denied unless current phase is COMMIT and final gates pass.
 Push: denied unless current phase is PUSH_OR_MERGE and finalization policy allows it.
 
 ${continuationInstruction}
+
+${phaseRequirement(workflow.currentPhase)}
 
 ${contracts[workflow.currentPhase]}`
 }

@@ -34,7 +34,7 @@ import {
 import { makeRepoFingerprint, makeWorkflowId, MemoryStore } from "./memory"
 import { authorizeTool, canWritePath, commandAllowedByTask, type PolicyDecision } from "./policy"
 import { matchGlob, normalizePath, relativePath, safeJoin } from "./path-utils"
-import { continuationInstruction, phaseContract } from "./prompts"
+import { continuationInstruction, phaseContract, phaseRequirement } from "./prompts"
 import {
   allowedTransitions,
   defaultGates,
@@ -102,6 +102,7 @@ export class WorkflowKernel {
       branch: workflow.branch,
       worktree: workflow.worktreePath,
       next_actions: this.nextActions(workflow),
+      phase_requirements: phaseRequirement(workflow.currentPhase),
     }
   }
 
@@ -156,9 +157,21 @@ export class WorkflowKernel {
     return {
       phase: workflow.currentPhase,
       next_actions: this.nextActions(workflow),
+      phase_requirements: phaseRequirement(workflow.currentPhase),
       continue_instruction: continuationInstruction,
       phase_contract: phaseContract(workflow),
     }
+  }
+
+  recoveryActions(workflow: WorkflowRecord, target: Phase, reason: string) {
+    const actions = [`Stay in ${workflow.currentPhase}; do not advance to ${target} yet.`]
+    if (workflow.currentPhase === "SPEC_CRITIQUE" && target === "SPEC_FREEZE" && reason.includes("Critique")) {
+      return [...actions, "If the critique intentionally failed, call workflow_request_phase_advance with target_phase SPEC_REVISION. Otherwise fix .workflow/artifacts/spec-critique.json using phase_requirements and retry SPEC_FREEZE."]
+    }
+    if (workflow.currentPhase === "PLAN_CRITIQUE" && target === "PLAN_FREEZE" && reason.includes("Critique")) {
+      return [...actions, "If the critique intentionally failed, call workflow_request_phase_advance with target_phase PLAN_REVISION. Otherwise fix .workflow/artifacts/plan-critique.json using phase_requirements and retry PLAN_FREEZE."]
+    }
+    return [...actions, "Fix the current phase artifact using phase_requirements exactly.", `Retry workflow_request_phase_advance with target_phase ${target}.`]
   }
 
   async startWorkflow(args: { goal: string; base_branch?: string; finalization_mode?: FinalizationMode; create_worktree?: boolean }, context?: Partial<ToolLikeContext>) {
@@ -251,7 +264,7 @@ export class WorkflowKernel {
     const gate = await this.validateTransitionGate(workflow, target)
     if (!gate.ok) {
       this.memory.appendEvent({ workflowId: workflow.id, event: "PHASE_ADVANCE_DENIED", actor: context?.agent ?? "model", fromPhase: workflow.currentPhase, toPhase: target, reason: gate.reason, payload: gate, mirrorRoot: workflow.worktreePath })
-      return gate
+      return { ...gate, recovery_actions: this.recoveryActions(workflow, target, gate.reason), ...this.workflowProgress(workflow) }
     }
     const patch = gate.patch ?? {}
     const nextStatus = target === "BLOCKED" ? "blocked" : target === "MEMORY_CONFLICT" ? "conflict" : target === "DONE" ? "done" : workflow.status

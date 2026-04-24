@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.5 - 2026-04-24
+
+- Added exact artifact heading and schema requirements to phase contracts and workflow progress responses.
+- Added recovery actions to failed phase-advance responses so repairable artifact validation failures can be fixed and retried instead of stopping as terminal blockers.
+
 ## 0.1.4 - 2026-04-24
 
 - Added continuation guidance to workflow tool responses and phase contracts so started or resumed workflows keep executing returned next actions until a blocker, terminal state, failed tool call, or required user input.

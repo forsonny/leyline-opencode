@@ -160,7 +160,7 @@ Start a governed workflow:
 /workflow Build the requested feature
 ```
 
-The command asks the model to call `workflow_start`. The kernel creates durable state, writes `.workflow/`, enters `DISCOVER`, and returns continuation guidance so the model keeps moving through phases until a blocker or required user decision appears.
+The command asks the model to call `workflow_start`. The kernel creates durable state, writes `.workflow/`, enters `DISCOVER`, and returns continuation guidance plus exact artifact requirements so the model keeps moving through phases until a blocker or required user decision appears.
 
 Inspect status:
 
