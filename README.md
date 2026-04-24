@@ -65,7 +65,7 @@ Use this complete minimal config. Replace `YOU` with your Windows account folder
   "command": {
     "workflow": {
       "description": "Start a Workflow Kernel workflow",
-      "template": "Start a governed Workflow Kernel workflow for this goal: $ARGUMENTS\n\nCall workflow_start with the goal, then report the workflow ID, phase, worktree path, and next required action."
+      "template": "Start a governed Workflow Kernel workflow for this goal: $ARGUMENTS\n\nCall workflow_start with the goal, then immediately continue executing the returned next_actions with Workflow Kernel tools until the workflow reaches DONE, BLOCKED, MEMORY_CONFLICT, or ABORTED, a tool returns ok:false, or user input is required. Do not stop after reporting status."
     },
     "workflow-status": {
       "description": "Show Workflow Kernel status",
@@ -73,7 +73,7 @@ Use this complete minimal config. Replace `YOU` with your Windows account folder
     },
     "workflow-resume": {
       "description": "Resume Workflow Kernel state",
-      "template": "Call workflow_memory_status. If there is a conflict, call workflow_conflict_report. Otherwise summarize the recovered phase contract and next required action."
+      "template": "Call workflow_memory_status. If there is a conflict, call workflow_conflict_report. Otherwise call workflow_read_context, then continue executing the recovered phase contract and next_actions until the workflow reaches DONE, BLOCKED, MEMORY_CONFLICT, or ABORTED, a tool returns ok:false, or user input is required."
     },
     "workflow-memory": {
       "description": "Show Workflow Kernel memory health",
@@ -160,7 +160,7 @@ Start a governed workflow:
 /workflow Build the requested feature
 ```
 
-The command asks the model to call `workflow_start`. The kernel creates durable state, writes `.workflow/`, and enters `DISCOVER`.
+The command asks the model to call `workflow_start`. The kernel creates durable state, writes `.workflow/`, enters `DISCOVER`, and returns continuation guidance so the model keeps moving through phases until a blocker or required user decision appears.
 
 Inspect status:
 

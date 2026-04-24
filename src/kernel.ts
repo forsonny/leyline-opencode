@@ -34,7 +34,7 @@ import {
 import { makeRepoFingerprint, makeWorkflowId, MemoryStore } from "./memory"
 import { authorizeTool, canWritePath, commandAllowedByTask, type PolicyDecision } from "./policy"
 import { matchGlob, normalizePath, relativePath, safeJoin } from "./path-utils"
-import { phaseContract } from "./prompts"
+import { continuationInstruction, phaseContract } from "./prompts"
 import {
   allowedTransitions,
   defaultGates,
@@ -108,27 +108,56 @@ export class WorkflowKernel {
   nextActions(workflow: WorkflowRecord) {
     switch (workflow.currentPhase) {
       case "DISCOVER":
-        return ["Write .workflow/artifacts/discovery.md", "Call workflow_request_phase_advance with target_phase BRAINSTORM"]
+        return ["Complete .workflow/artifacts/discovery.md with workflow_write_artifact", "Call workflow_request_phase_advance with target_phase BRAINSTORM"]
       case "BRAINSTORM":
-        return ["Write .workflow/artifacts/brainstorm.md", "Call workflow_request_phase_advance with target_phase SPEC_DRAFT"]
+        return ["Complete .workflow/artifacts/brainstorm.md with workflow_write_artifact", "Call workflow_request_phase_advance with target_phase SPEC_DRAFT"]
       case "SPEC_DRAFT":
-        return ["Write product-spec.md and design-spec.md", "Call workflow_request_phase_advance with target_phase SPEC_CRITIQUE"]
+        return ["Write product-spec.md and design-spec.md with workflow_write_artifact", "Call workflow_request_phase_advance with target_phase SPEC_CRITIQUE"]
       case "SPEC_CRITIQUE":
-        return ["Write spec-critique.json", "Advance to SPEC_FREEZE if pass or SPEC_REVISION if fail"]
+        return ["Write spec-critique.json with workflow_write_artifact", "Call workflow_request_phase_advance with target_phase SPEC_FREEZE if pass or SPEC_REVISION if fail"]
+      case "SPEC_REVISION":
+        return ["Revise product-spec.md and design-spec.md with workflow_write_artifact", "Call workflow_request_phase_advance with target_phase SPEC_CRITIQUE"]
+      case "SPEC_FREEZE":
+        return ["Call workflow_request_phase_advance with target_phase PLAN_DRAFT"]
       case "PLAN_DRAFT":
-        return ["Write plan.md", "Call workflow_request_phase_advance with target_phase PLAN_CRITIQUE"]
+        return ["Write plan.md with workflow_write_artifact", "Call workflow_request_phase_advance with target_phase PLAN_CRITIQUE"]
       case "PLAN_CRITIQUE":
-        return ["Write plan-critique.json", "Advance to PLAN_FREEZE if pass or PLAN_REVISION if fail"]
+        return ["Write plan-critique.json with workflow_write_artifact", "Call workflow_request_phase_advance with target_phase PLAN_FREEZE if pass or PLAN_REVISION if fail"]
+      case "PLAN_REVISION":
+        return ["Revise plan.md with workflow_write_artifact", "Call workflow_request_phase_advance with target_phase PLAN_CRITIQUE"]
+      case "PLAN_FREEZE":
+        return ["Call workflow_request_phase_advance with target_phase TASK_ATOMIZATION"]
       case "TASK_ATOMIZATION":
-        return ["Create task JSON files with workflow_create_task", "Advance to TASK_EXECUTION"]
+        return ["Create task JSON files with workflow_create_task", "Call workflow_start_task to activate the first pending task and enter TASK_EXECUTION"]
       case "TASK_EXECUTION":
-        return ["Implement only the active task allowed_files", "Run workflow_run_verification"]
+        return workflow.activeTaskId ? ["Implement only the active task allowed_files", "Call workflow_run_verification"] : ["Call workflow_start_task to activate the next pending task"]
       case "TASK_VERIFICATION":
         return ["Call workflow_finish_task after verification passes"]
+      case "INTEGRATION_VERIFICATION":
+        return ["Run whole-workflow verification and write .workflow/verification/integration-verification.json", "Call workflow_request_phase_advance with target_phase FINAL_REVIEW"]
       case "FINAL_REVIEW":
-        return ["Write final-review.json and final-report.md", "Call workflow_finalize"]
+        return ["Write final-review.json and final-report.md with workflow_write_artifact", "Call workflow_finalize"]
+      case "COMMIT":
+        return ["Call workflow_finalize to create the authorized commit"]
+      case "PUSH_OR_MERGE":
+        return ["Call workflow_finalize to complete push or merge according to policy"]
+      case "DONE":
+        return ["Workflow is complete"]
+      case "BLOCKED":
+      case "MEMORY_CONFLICT":
+      case "ABORTED":
+        return ["Stop and report the required recovery action to the user"]
       default:
         return [`Allowed next phases: ${allowedTransitions[workflow.currentPhase].join(", ") || "none"}`]
+    }
+  }
+
+  workflowProgress(workflow: WorkflowRecord) {
+    return {
+      phase: workflow.currentPhase,
+      next_actions: this.nextActions(workflow),
+      continue_instruction: continuationInstruction,
+      phase_contract: phaseContract(workflow),
     }
   }
 
@@ -182,10 +211,10 @@ export class WorkflowKernel {
     return {
       ok: true,
       workflow_id: workflow.id,
-      phase: workflow.currentPhase,
       worktree: workflow.worktreePath,
       branch: workflow.branch,
       note: shouldCreateWorktree ? "OpenCode should be run from this worktree path for implementation phases." : "Workflow is using the current worktree.",
+      ...this.workflowProgress(workflow),
     }
   }
 
@@ -196,7 +225,7 @@ export class WorkflowKernel {
     const written = await writeWorkflowFile(workflow.worktreePath, args.path, args.content)
     this.memory.recordArtifact({ workflowId: workflow.id, artifactKey: args.artifact_key ?? normalizePath(args.path), path: written.path, sha256: written.sha256, frozen: false })
     this.memory.appendEvent({ workflowId: workflow.id, event: "ARTIFACT_WRITTEN", actor: context?.agent ?? "model", fromPhase: workflow.currentPhase, toPhase: workflow.currentPhase, reason: `Artifact written: ${written.path}`, payload: written, mirrorRoot: workflow.worktreePath })
-    return { ok: true, ...written }
+    return { ok: true, ...written, ...this.workflowProgress(workflow) }
   }
 
   async readContext(context?: Partial<ToolLikeContext>) {
@@ -205,6 +234,8 @@ export class WorkflowKernel {
       workflow,
       active_task: this.activeTask(workflow),
       phase_contract: phaseContract(workflow),
+      next_actions: this.nextActions(workflow),
+      continue_instruction: continuationInstruction,
       artifacts: this.memory.listArtifacts(workflow.id),
       tasks: this.memory.listTasks(workflow.id),
     }
@@ -226,7 +257,7 @@ export class WorkflowKernel {
     const nextStatus = target === "BLOCKED" ? "blocked" : target === "MEMORY_CONFLICT" ? "conflict" : target === "DONE" ? "done" : workflow.status
     const next = this.memory.updateWorkflow(workflow.id, { ...patch, previousPhase: workflow.currentPhase, currentPhase: target, status: nextStatus })
     this.memory.appendEvent({ workflowId: workflow.id, event: "PHASE_ADVANCED", actor: "workflow-kernel", fromPhase: workflow.currentPhase, toPhase: target, reason: args.reason ?? gate.reason, payload: { patch }, mirrorRoot: workflow.worktreePath })
-    return { ok: true, workflow_id: next.id, from_phase: workflow.currentPhase, to_phase: target, gates: next.gates, locks: { spec_locked: next.specLocked, plan_locked: next.planLocked } }
+    return { ok: true, workflow_id: next.id, from_phase: workflow.currentPhase, to_phase: target, gates: next.gates, locks: { spec_locked: next.specLocked, plan_locked: next.planLocked }, ...this.workflowProgress(next) }
   }
 
   async createTask(args: { task: unknown }, context?: Partial<ToolLikeContext>) {
@@ -240,7 +271,7 @@ export class WorkflowKernel {
     await writeWorkflowFile(workflow.worktreePath, file, JSON.stringify(parsed.task, null, 2))
     this.memory.saveTask(workflow.id, parsed.task)
     this.memory.appendEvent({ workflowId: workflow.id, event: "TASK_CREATED", actor: context?.agent ?? "model", fromPhase: workflow.currentPhase, toPhase: workflow.currentPhase, reason: `Task created: ${parsed.task.id}`, payload: { task_id: parsed.task.id, file }, mirrorRoot: workflow.worktreePath })
-    return { ok: true, task_id: parsed.task.id, path: file }
+    return { ok: true, task_id: parsed.task.id, path: file, ...this.workflowProgress(workflow) }
   }
 
   async startTask(args: { task_id?: string }, context?: Partial<ToolLikeContext>) {
@@ -254,7 +285,7 @@ export class WorkflowKernel {
     this.memory.updateTaskStatus(workflow.id, task.id, "active")
     const next = this.memory.updateWorkflow(workflow.id, { activeTaskId: task.id, previousPhase: workflow.currentPhase, currentPhase: "TASK_EXECUTION" })
     this.memory.appendEvent({ workflowId: workflow.id, event: "TASK_STARTED", actor: "workflow-kernel", fromPhase: workflow.currentPhase, toPhase: "TASK_EXECUTION", reason: `Task ${task.id} started`, payload: { task_id: task.id }, mirrorRoot: workflow.worktreePath })
-    return { ok: true, workflow_id: next.id, phase: next.currentPhase, active_task: this.memory.getTask(workflow.id, task.id) }
+    return { ok: true, workflow_id: next.id, active_task: this.memory.getTask(workflow.id, task.id), ...this.workflowProgress(next) }
   }
 
   async editTaskFile(args: { path: string; content: string }, context?: Partial<ToolLikeContext>) {
@@ -313,7 +344,7 @@ export class WorkflowKernel {
     await writeWorkflowFile(workflow.worktreePath, file, JSON.stringify(verification, null, 2))
     this.memory.saveVerification(workflow.id, task.id, verification.result, verification)
     this.memory.appendEvent({ workflowId: workflow.id, event: "TASK_VERIFICATION_RECORDED", actor: "workflow-kernel", fromPhase: workflow.currentPhase, toPhase: workflow.currentPhase, reason: `Verification ${verification.result} for task ${task.id}`, payload: { task_id: task.id, result: verification.result }, mirrorRoot: workflow.worktreePath })
-    return { ok: pass, verification_path: file, verification }
+    return { ok: pass, verification_path: file, verification, ...this.workflowProgress(workflow) }
   }
 
   async finishTask(args: { task_id?: string }, context?: Partial<ToolLikeContext>) {
@@ -329,7 +360,7 @@ export class WorkflowKernel {
     const nextPhase: Phase = remaining.length ? "TASK_EXECUTION" : "INTEGRATION_VERIFICATION"
     const next = this.memory.updateWorkflow(workflow.id, { activeTaskId: null, previousPhase: workflow.currentPhase, currentPhase: nextPhase, gates: { ...workflow.gates, tasks_passed: remaining.length === 0 } })
     this.memory.appendEvent({ workflowId: workflow.id, event: "TASK_FINISHED", actor: "workflow-kernel", fromPhase: workflow.currentPhase, toPhase: nextPhase, reason: `Task ${taskId} complete`, payload: { task_id: taskId, remaining: remaining.length }, mirrorRoot: workflow.worktreePath })
-    return { ok: true, task_id: taskId, phase: next.currentPhase, remaining_tasks: remaining.map((task) => task.id) }
+    return { ok: true, task_id: taskId, remaining_tasks: remaining.map((task) => task.id), ...this.workflowProgress(next) }
   }
 
   async finalize(args: { commit_message?: string; mode?: FinalizationMode; perform_push?: boolean }, context?: Partial<ToolLikeContext>) {
@@ -363,13 +394,13 @@ export class WorkflowKernel {
     const mode = args.mode ?? workflow.finalizationMode
     if (mode === "direct-main" && !this.config.finalization.directMainAllowed) return { ok: false, reason: "direct-main finalization is disabled by policy" }
     const performPush = args.perform_push ?? this.config.finalization.performPush
-    if (!performPush) return { ok: true, phase: "PUSH_OR_MERGE", commit_hash: commitHash, finalization_mode: mode, note: "Push/merge not performed because performPush is false." }
+    if (!performPush) return { ok: true, commit_hash: commitHash, finalization_mode: mode, note: "Push/merge not performed because performPush is false.", ...this.workflowProgress(workflow) }
     if (!workflow.branch) return { ok: false, reason: "Cannot push because workflow branch is unknown" }
     const push = await pushBranch({ cwd: workflow.worktreePath, branch: workflow.branch })
     if (push.exitCode !== 0) return { ok: false, reason: "Git push failed", command: push.command, stdout: push.stdout, stderr: push.stderr }
     const done = this.memory.updateWorkflow(workflow.id, { previousPhase: workflow.currentPhase, currentPhase: "DONE", status: "done", gitPushLocked: false })
     this.memory.appendEvent({ workflowId: workflow.id, event: "WORKFLOW_FINALIZED", actor: "workflow-kernel", fromPhase: "PUSH_OR_MERGE", toPhase: "DONE", reason: `Finalization mode ${mode} completed`, payload: { mode, commit_hash: commitHash }, mirrorRoot: workflow.worktreePath })
-    return { ok: true, phase: done.currentPhase, commit_hash: commitHash, finalization_mode: mode, push: { stdout: push.stdout, stderr: push.stderr } }
+    return { ok: true, commit_hash: commitHash, finalization_mode: mode, push: { stdout: push.stdout, stderr: push.stderr }, ...this.workflowProgress(done) }
   }
 
   async abort(args: { reason: string }, context?: Partial<ToolLikeContext>) {

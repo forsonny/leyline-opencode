@@ -15,6 +15,11 @@ Do not commit.
 Do not push.
 Do not modify workflow policy, trusted state, workflow memory, plugin files, OpenCode config, or git internals.`
 
+export const continuationInstruction = `Continuation mode:
+When the active user request is to start, resume, or continue a workflow, keep executing the current phase contract and any returned next_actions immediately.
+Treat next_actions as instructions to perform, not status text to report.
+Stop only when the workflow reaches DONE, ABORTED, BLOCKED, MEMORY_CONFLICT, a workflow tool returns ok:false, policy denies an action, or user input is required.`
+
 const contracts: Record<Phase, string> = {
   INIT: "Current phase: INIT. Start or recover the workflow through workflow_start or workflow_status only.",
   DISCOVER: "Current phase: DISCOVER. Inspect repository context and write .workflow/artifacts/discovery.md with the required Discovery headings. Do not edit source files.",
@@ -54,6 +59,8 @@ Active task: ${workflow.activeTaskId ?? "none"}
 Worktree: ${workflow.worktreePath}
 Commit: denied unless current phase is COMMIT and final gates pass.
 Push: denied unless current phase is PUSH_OR_MERGE and finalization policy allows it.
+
+${continuationInstruction}
 
 ${contracts[workflow.currentPhase]}`
 }

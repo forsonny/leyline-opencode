@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.4 - 2026-04-24
+
+- Added continuation guidance to workflow tool responses and phase contracts so started or resumed workflows keep executing returned next actions until a blocker, terminal state, failed tool call, or required user input.
+- Updated `/workflow` and `/workflow-resume` command templates to avoid stopping after status reporting.
+
 ## 0.1.3 - 2026-04-24
 
 - Fixed migration of existing Workflow Kernel state databases that were missing newer workflow columns.

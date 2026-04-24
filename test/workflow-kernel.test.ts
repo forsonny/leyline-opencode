@@ -190,9 +190,16 @@ describe("kernel workflow", () => {
 
     const started = await kernel.startWorkflow({ goal: "Build a test feature", create_worktree: false }, { directory: root, worktree: root, sessionID: "s", agent: "test" })
     expect(started.ok).toBe(true)
+    if (!("next_actions" in started)) throw new Error("workflow_start did not return continuation guidance")
+    expect(started.next_actions.join("\n")).toContain("workflow_write_artifact")
+    expect(started.continue_instruction).toContain("keep executing")
+    expect(started.phase_contract).toContain("Continuation mode")
 
     const advanced = await kernel.requestPhaseAdvance({ target_phase: "BRAINSTORM" }, { directory: root, worktree: root, sessionID: "s", agent: "test" })
     expect(advanced.ok).toBe(true)
+    if (!("next_actions" in advanced)) throw new Error("workflow_request_phase_advance did not return continuation guidance")
+    expect(advanced.next_actions.join("\n")).toContain("workflow_write_artifact")
+    expect(advanced.phase_contract).toContain("Current phase: BRAINSTORM")
 
     const denied = await kernel.authorizeBuiltInTool({ tool: "write", args: { filePath: path.join(root, "src", "app.ts") }, root })
     expect(denied.decision).toBe("deny")
