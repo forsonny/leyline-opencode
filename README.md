@@ -18,18 +18,110 @@ The plugin treats the model as an untrusted proposer and the kernel as the autho
 
 ## Install
 
-This project is intended for GitHub/local-path distribution, not npm publishing.
+This project is intended for GitHub/local-path distribution, not npm publishing. A working install has two parts:
 
-Clone and build the plugin:
+- the plugin path in `plugin`, which loads the Workflow Kernel tools,
+- the `command` entries, which add slash commands such as `/workflow` and `/workflow-status`.
 
-```bash
-git clone https://github.com/forsonny/leyline-opencode.git
-cd leyline-opencode
+If the plugin path is configured but the `command` block is missing, OpenCode can load the plugin while the workflow slash commands are absent.
+
+### 1. Clone and build the plugin
+
+Clone the repo into a stable location. This example uses the global OpenCode config directory on Windows:
+
+In the Windows commands below, `YOU` is a placeholder for your Windows account folder name. If your home folder is `C:/Users/USERNAME`, use `C:/Users/USERNAME/.config/opencode/plugins/leyline-opencode`.
+
+```powershell
+git clone https://github.com/forsonny/leyline-opencode.git C:/Users/YOU/.config/opencode/plugins/leyline-opencode
+cd C:/Users/YOU/.config/opencode/plugins/leyline-opencode
 bun install
 bun run build
 ```
 
-Then load it from your project `opencode.json` as a local path plugin. Adjust the path to wherever you cloned the repo:
+On macOS/Linux, the same layout would be:
+
+```bash
+git clone https://github.com/forsonny/leyline-opencode.git ~/.config/opencode/plugins/leyline-opencode
+cd ~/.config/opencode/plugins/leyline-opencode
+bun install
+bun run build
+```
+
+### 2. Add it to OpenCode config
+
+Edit your global OpenCode config:
+
+- Windows: `C:/Users/YOU/.config/opencode/opencode.json`
+- macOS/Linux: `~/.config/opencode/opencode.json`
+
+Use this complete minimal config. Replace `YOU` with your Windows account folder name, or replace the whole path with the path where you cloned the repo. In JSON, forward slashes are valid on Windows and avoid backslash escaping mistakes.
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    "C:/Users/YOU/.config/opencode/plugins/leyline-opencode"
+  ],
+  "command": {
+    "workflow": {
+      "description": "Start a Workflow Kernel workflow",
+      "template": "Start a governed Workflow Kernel workflow for this goal: $ARGUMENTS\n\nCall workflow_start with the goal, then report the workflow ID, phase, worktree path, and next required action."
+    },
+    "workflow-status": {
+      "description": "Show Workflow Kernel status",
+      "template": "Call workflow_status and summarize the current phase, active task, blockers, and next required action."
+    },
+    "workflow-resume": {
+      "description": "Resume Workflow Kernel state",
+      "template": "Call workflow_memory_status. If there is a conflict, call workflow_conflict_report. Otherwise summarize the recovered phase contract and next required action."
+    },
+    "workflow-memory": {
+      "description": "Show Workflow Kernel memory health",
+      "template": "Call workflow_memory_status and report memory path, ledger health, and frozen artifact validation."
+    },
+    "workflow-conflict-report": {
+      "description": "Write a Workflow Kernel conflict report",
+      "template": "Call workflow_conflict_report and summarize conflicts plus allowed recovery actions."
+    },
+    "workflow-finalize": {
+      "description": "Finalize a Workflow Kernel workflow",
+      "template": "Call workflow_finalize. Do not run raw git commit or raw git push. Report the commit hash and finalization status."
+    },
+    "workflow-abort": {
+      "description": "Abort a Workflow Kernel workflow",
+      "template": "Call workflow_abort with this reason: $ARGUMENTS"
+    }
+  }
+}
+```
+
+If you already have an OpenCode config, merge the `plugin` entry and the full `command` block into your existing file. Do not remove your provider, model, permission, MCP, or other existing settings.
+
+### 3. Restart and verify
+
+Restart OpenCode after changing the config. Then verify that OpenCode resolved both the plugin and the workflow commands:
+
+```bash
+opencode debug config
+```
+
+In the output, check for:
+
+- `plugin_origins` containing the local `leyline-opencode` path,
+- `command.workflow`,
+- `command.workflow-status`.
+
+Then open OpenCode and run:
+
+```text
+/workflow-status
+```
+
+Expected result: the assistant calls `workflow_status` and reports no active workflow yet, or reports the current workflow state.
+
+### 4. Optional project-local config
+
+Instead of putting the plugin in your global config, you can load it from a project's `opencode.json`. Adjust the relative path to wherever you cloned the repo:
 
 ```json
 {
@@ -38,20 +130,20 @@ Then load it from your project `opencode.json` as a local path plugin. Adjust th
 }
 ```
 
-You can also use an absolute path:
+If you use project-local config, also copy or merge the `command` block from `examples/opencode.json`; slash commands are not created by the plugin path alone.
 
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["file:/absolute/path/to/leyline-opencode"]
-}
-```
+### Common install mistakes
 
-OpenCode's documented plugin distribution modes are npm packages and local plugin files. Since this repo is GitHub-only, use the local path mode from a cloned checkout. Local path plugins must export an `id`, which this package does.
+- Missing `command` block: the plugin loads, but `/workflow` and `/workflow-status` do not appear.
+- Missing JSON comma between plugin entries.
+- Unescaped Windows backslashes. Use `C:/Users/YOU/...` or double every backslash.
+- Using `leyline@git+https://...`; this project is `leyline-opencode` and is meant to be loaded from a cloned local path.
+- Forgetting `bun run build`; OpenCode loads `dist/index.js`.
+- Forgetting to restart OpenCode after changing config.
 
 ## Recommended OpenCode Config
 
-Copy `examples/opencode.json` into your project or merge it into your existing `opencode.json`.
+Copy `examples/opencode.json` into your project or merge it into your existing `opencode.json` when you want stricter workflow permissions and plugin options.
 
 The example config:
 
@@ -144,7 +236,7 @@ Disable worktree creation in plugin options:
 {
   "plugin": [
     [
-      "leyline-opencode",
+      "file:../leyline-opencode",
       {
         "worktree": { "enabled": false }
       }

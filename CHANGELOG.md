@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2 - 2026-04-24
+
+- Clarified the full local-path install flow, including slash-command configuration, Windows account-name placeholders, and verification steps.
+
 ## 0.1.1 - 2026-04-24
 
 - Updated documentation and example config for GitHub/local-path distribution.
