@@ -191,6 +191,94 @@ export class MemoryStore {
         summary TEXT NOT NULL
       );
     `)
+    this.migrateWorkflowColumns()
+  }
+
+  private migrateWorkflowColumns() {
+    const columns = new Set((this.db.prepare("PRAGMA table_info(workflows)").all() as Array<{ name: string }>).map((column) => column.name))
+    if (columns.has("locks_json") || columns.has("artifact_hashes_json")) {
+      this.rebuildWorkflowTable()
+      return
+    }
+
+    const migrations: Array<{ name: string; definition: string }> = [
+      { name: "spec_locked", definition: "INTEGER NOT NULL DEFAULT 0" },
+      { name: "plan_locked", definition: "INTEGER NOT NULL DEFAULT 0" },
+      { name: "git_push_locked", definition: "INTEGER NOT NULL DEFAULT 1" },
+      { name: "status", definition: "TEXT NOT NULL DEFAULT 'active'" },
+      { name: "commit_hash", definition: "TEXT" },
+      { name: "finalization_mode", definition: "TEXT NOT NULL DEFAULT 'branch-push'" },
+    ]
+
+    for (const migration of migrations) {
+      if (!columns.has(migration.name)) this.db.exec(`ALTER TABLE workflows ADD COLUMN ${migration.name} ${migration.definition}`)
+    }
+  }
+
+  private rebuildWorkflowTable() {
+    const rows = this.db.prepare("SELECT * FROM workflows").all() as Array<Record<string, unknown>>
+    const legacyTable = `workflows_legacy_${Date.now()}`
+    this.db.exec(`
+      ALTER TABLE workflows RENAME TO ${legacyTable};
+      CREATE TABLE workflows (
+        id TEXT PRIMARY KEY,
+        version TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        repo_fingerprint TEXT NOT NULL,
+        repo_root TEXT NOT NULL,
+        worktree_path TEXT NOT NULL,
+        branch TEXT,
+        base_branch TEXT,
+        current_phase TEXT NOT NULL,
+        previous_phase TEXT,
+        active_task_id TEXT,
+        spec_locked INTEGER NOT NULL,
+        plan_locked INTEGER NOT NULL,
+        git_push_locked INTEGER NOT NULL,
+        loops_json TEXT NOT NULL,
+        gates_json TEXT NOT NULL,
+        last_event_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_resumed_at TEXT,
+        status TEXT NOT NULL,
+        commit_hash TEXT,
+        finalization_mode TEXT NOT NULL
+      );
+    `)
+
+    for (const row of rows) {
+      this.saveWorkflow(this.workflowFromLegacyRow(row))
+    }
+  }
+
+  private workflowFromLegacyRow(row: Record<string, unknown>): WorkflowRecord {
+    const now = new Date().toISOString()
+    return {
+      id: stringField(row, "id", makeWorkflowId()),
+      version: stringField(row, "version", VERSION),
+      goal: stringField(row, "goal", "Legacy workflow"),
+      repoFingerprint: stringField(row, "repo_fingerprint", ""),
+      repoRoot: stringField(row, "repo_root", this.path),
+      worktreePath: stringField(row, "worktree_path", this.path),
+      branch: nullableStringField(row, "branch"),
+      baseBranch: nullableStringField(row, "base_branch"),
+      currentPhase: PhaseSchema.parse(stringField(row, "current_phase", "INIT")),
+      previousPhase: nullableStringField(row, "previous_phase") ? PhaseSchema.parse(nullableStringField(row, "previous_phase")) : null,
+      activeTaskId: nullableStringField(row, "active_task_id"),
+      specLocked: Boolean(numberField(row, "spec_locked", 0)),
+      planLocked: Boolean(numberField(row, "plan_locked", 0)),
+      gitPushLocked: Boolean(numberField(row, "git_push_locked", 1)),
+      loops: parseJson(stringField(row, "loops_json", ""), defaultLoops()),
+      gates: parseJson(stringField(row, "gates_json", ""), defaultGates()),
+      lastEventHash: stringField(row, "last_event_hash", "GENESIS"),
+      createdAt: stringField(row, "created_at", now),
+      updatedAt: stringField(row, "updated_at", now),
+      lastResumedAt: nullableStringField(row, "last_resumed_at"),
+      status: stringField(row, "status", "active") as WorkflowStatus,
+      commitHash: nullableStringField(row, "commit_hash"),
+      finalizationMode: stringField(row, "finalization_mode", "branch-push") as FinalizationMode,
+    }
   }
 
   createWorkflow(input: Omit<WorkflowRecord, "version" | "lastEventHash" | "createdAt" | "updatedAt" | "lastResumedAt" | "status" | "commitHash">) {
@@ -213,7 +301,31 @@ export class MemoryStore {
     const row = this.toRow({ ...record, updatedAt: new Date().toISOString() })
     this.db
       .prepare(`
-        INSERT INTO workflows VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO workflows (
+          id,
+          version,
+          goal,
+          repo_fingerprint,
+          repo_root,
+          worktree_path,
+          branch,
+          base_branch,
+          current_phase,
+          previous_phase,
+          active_task_id,
+          spec_locked,
+          plan_locked,
+          git_push_locked,
+          loops_json,
+          gates_json,
+          last_event_hash,
+          created_at,
+          updated_at,
+          last_resumed_at,
+          status,
+          commit_hash,
+          finalization_mode
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET
           version=excluded.version,
           goal=excluded.goal,
@@ -546,6 +658,21 @@ function parseJson<T>(input: string, fallback: T): T {
   } catch {
     return fallback
   }
+}
+
+function stringField(row: Record<string, unknown>, key: string, fallback: string) {
+  const value = row[key]
+  return typeof value === "string" && value.length > 0 ? value : fallback
+}
+
+function nullableStringField(row: Record<string, unknown>, key: string) {
+  const value = row[key]
+  return typeof value === "string" && value.length > 0 ? value : null
+}
+
+function numberField(row: Record<string, unknown>, key: string, fallback: number) {
+  const value = row[key]
+  return typeof value === "number" ? value : fallback
 }
 
 export function makeWorkflowId(date = new Date()) {

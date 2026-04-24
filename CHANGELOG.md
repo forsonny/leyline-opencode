@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3 - 2026-04-24
+
+- Fixed migration of existing Workflow Kernel state databases that were missing newer workflow columns.
+- Made Windows test cleanup more tolerant of transient SQLite file locks.
+
 ## 0.1.2 - 2026-04-24
 
 - Clarified the full local-path install flow, including slash-command configuration, Windows account-name placeholders, and verification steps.

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { Database as SQLiteDatabase } from "bun:sqlite"
 import { mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -20,12 +21,12 @@ afterEach(async () => {
 })
 
 async function removeWithRetry(dir: string) {
-  for (let attempt = 0; attempt < 20; attempt++) {
+  for (let attempt = 0; attempt < 60; attempt++) {
     try {
       await rm(dir, { recursive: true, force: true })
       return
     } catch (error) {
-      if (attempt === 19) throw error
+      if (attempt === 59) throw error
       await new Promise((resolve) => setTimeout(resolve, 100))
     }
   }
@@ -124,6 +125,45 @@ describe("policy", () => {
 })
 
 describe("memory", () => {
+  test("migrates legacy workflow rows before saving new workflows", async () => {
+    const root = await tempDir()
+    const dbPath = path.join(root, "legacy.db")
+    const legacy = new SQLiteDatabase(dbPath)
+    legacy.exec(`
+      CREATE TABLE workflows (
+        id TEXT PRIMARY KEY,
+        version TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        repo_fingerprint TEXT NOT NULL,
+        repo_root TEXT NOT NULL,
+        worktree_path TEXT NOT NULL,
+        branch TEXT,
+        base_branch TEXT,
+        current_phase TEXT NOT NULL,
+        previous_phase TEXT,
+        active_task_id TEXT,
+        loops_json TEXT NOT NULL,
+        gates_json TEXT NOT NULL,
+        locks_json TEXT NOT NULL,
+        artifact_hashes_json TEXT NOT NULL,
+        last_event_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        last_resumed_at TEXT
+      );
+    `)
+    legacy.close()
+
+    const memory = new MemoryStore(dbPath)
+    const columns = memory.db.prepare("PRAGMA table_info(workflows)").all() as Array<{ name: string }>
+    expect(columns.map((column) => column.name)).toContain("status")
+    expect(columns.map((column) => column.name)).toContain("spec_locked")
+    const base = workflowRecord(root)
+    const { version: _version, lastEventHash: _lastEventHash, createdAt: _createdAt, updatedAt: _updatedAt, lastResumedAt: _lastResumedAt, status: _status, commitHash: _commitHash, ...createInput } = base
+    expect(() => memory.createWorkflow(createInput)).not.toThrow()
+    memory.close()
+  })
+
   test("validates hash-chained ledger and detects workflow hash mismatch", async () => {
     const root = await tempDir()
     const dbPath = path.join(root, "state.db")
