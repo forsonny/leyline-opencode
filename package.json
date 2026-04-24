@@ -1,10 +1,19 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "leyline-opencode",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenCode Workflow Kernel plugin for deterministic phase-gated AI coding workflows.",
   "type": "module",
+  "private": true,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/forsonny/leyline-opencode.git"
+  },
+  "bugs": {
+    "url": "https://github.com/forsonny/leyline-opencode/issues"
+  },
+  "homepage": "https://github.com/forsonny/leyline-opencode#readme",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

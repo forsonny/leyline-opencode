@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1 - 2026-04-24
+
+- Updated documentation and example config for GitHub/local-path distribution.
+- Marked package private to prevent accidental npm publishing.
+
 ## 0.1.0 - 2026-04-24
 
 - Initial OpenCode Workflow Kernel plugin implementation.

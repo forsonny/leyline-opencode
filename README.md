@@ -18,16 +18,18 @@ The plugin treats the model as an untrusted proposer and the kernel as the autho
 
 ## Install
 
-After publishing to npm:
+This project is intended for GitHub/local-path distribution, not npm publishing.
 
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "plugin": ["leyline-opencode"]
-}
+Clone and build the plugin:
+
+```bash
+git clone https://github.com/forsonny/leyline-opencode.git
+cd leyline-opencode
+bun install
+bun run build
 ```
 
-For local development from a cloned repo:
+Then load it from your project `opencode.json` as a local path plugin. Adjust the path to wherever you cloned the repo:
 
 ```json
 {
@@ -36,7 +38,16 @@ For local development from a cloned repo:
 }
 ```
 
-OpenCode loads npm plugins through Bun at startup. Local path plugins must export an `id`, which this package does.
+You can also use an absolute path:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["file:/absolute/path/to/leyline-opencode"]
+}
+```
+
+OpenCode's documented plugin distribution modes are npm packages and local plugin files. Since this repo is GitHub-only, use the local path mode from a cloned checkout. Local path plugins must export an `id`, which this package does.
 
 ## Recommended OpenCode Config
 
@@ -165,4 +176,4 @@ bun run build
 
 ## Package Status
 
-This repository is ready to upload to GitHub and publish to npm as `leyline-opencode`.
+This repository is ready to use from GitHub as a local path OpenCode plugin. It is marked `private` in `package.json` to prevent accidental npm publishing.
