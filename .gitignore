@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.workflow/
+.worktrees/
+*.db
+*.db-shm
+*.db-wal
+*.tsbuildinfo

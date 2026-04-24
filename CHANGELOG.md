@@ -1,0 +1,6 @@
+# Changelog
+
+## 0.1.0 - 2026-04-24
+
+- Initial OpenCode Workflow Kernel plugin implementation.
+- Added phase-gated workflow state machine, SQLite-backed durable memory, artifact validators, custom tools, hook enforcement, worktree helpers, and documentation.
